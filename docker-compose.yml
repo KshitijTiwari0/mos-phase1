@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: mos_postgres
+    environment:
+      POSTGRES_USER: mos_user
+      POSTGRES_PASSWORD: mos_password
+      POSTGRES_DB: mos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - mos_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: mos_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  mos_postgres_data:
