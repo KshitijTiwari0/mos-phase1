@@ -1,4 +1,5 @@
 # MASTER_REFERENCE.md
+# Architecture Version: 1.1
 
 # MOS Phase 1 — Master Reference Document
 
@@ -393,7 +394,14 @@ Defines:
 
 ## AI
 
-* OpenRouter/OpenAI-compatible APIs
+Current Phase 1:
+- Google Gemini API
+- Google GenAI SDK
+- Centralized llm_service
+
+Future:
+- OpenRouter/OpenAI-compatible provider abstraction
+- Agent-specific model routing
 
 ## Frontend
 
@@ -743,6 +751,12 @@ Agents should be independently replaceable.
 All agent outputs should be structured.
 
 ---
+## 6. LLM Access Rule
+
+All LLM communication must happen through:
+services/llm/llm_service.py
+
+Agents must never directly call providers.
 
 # 17. Phase 1 Demo Scope
 
