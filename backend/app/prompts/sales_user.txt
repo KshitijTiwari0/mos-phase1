@@ -1,0 +1,13 @@
+Analytics Signal (precomputed — use this to calibrate urgency and tone):
+$analytics_signal
+
+Lead Info:
+$lead_context
+
+Full Conversation History:
+$conversation_history
+
+Incoming Customer Message:
+$customer_message
+
+Generate the appropriate sales response and populate the response schema. The response_text MUST be written in the tone specified in the system instruction.

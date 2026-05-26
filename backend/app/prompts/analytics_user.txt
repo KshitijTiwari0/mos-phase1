@@ -1,0 +1,10 @@
+Lead Context:
+$lead_context
+
+Recent Conversation History:
+$conversation_history
+
+Latest Customer Message:
+$customer_message
+
+Analyze this interaction and populate the requested fields strictly according to the JSON schema you are given.

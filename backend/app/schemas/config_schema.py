@@ -1,21 +1,18 @@
-from pydantic import BaseModel
-from typing import Any
+from app.schemas.agent_schema import BusinessConfig
 
 
-class BusinessConfigCreate(BaseModel):
+class BusinessConfigCreate(BusinessConfig):
+    """API DTO for creating a tenant business config.
+
+    Inherits every field from the canonical BusinessConfig used by agents,
+    and adds the tenant identifier. Keeping a single base prevents config
+    drift between the API surface and what the agents actually consume.
+    """
+
     tenant_id: str
-    business_name: str
-    industry: str
-    tone: str
-    primary_goal: str
-    products: list[Any] = []
-    faqs: list[Any] = []
-    qualification_questions: list[Any] = []
-    objection_handling: list[Any] = []
-    primary_cta: str
 
 
-class BusinessConfigResponse(BaseModel):
-    tenant_id: str
-    business_name: str
-    industry: str
+class BusinessConfigResponse(BusinessConfigCreate):
+    """Full read-model returned by GET /config/{tenant_id}."""
+
+    pass

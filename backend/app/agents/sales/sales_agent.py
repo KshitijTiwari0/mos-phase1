@@ -1,83 +1,112 @@
-import json
+from typing import List, Union
+
+from app.agents.base import envelope_from_llm, serialize_dict, serialize_history
+from app.prompts.loader import load_prompt, wrap_untrusted
+from app.schemas.agent_schema import AgentEnvelope, AgentInput, SalesAgentData
 from app.services.llm.llm_service import generate_json_response
 
+AGENT_NAME = "sales_ai"
 
-class SalesAgent:
-    @staticmethod
-    def run(agent_input: dict) -> dict:
-        """
-        Conversation and persuasion engine.
-        Responsibilities: qualification, conversation, objection handling, CTA generation, follow-up direction.
-        The goal is not just answering, but moving the lead toward action.
-        """
-        tenant_id = agent_input.get("tenant_id", "unknown")
-        customer_message = agent_input.get("customer_message", "")
-        business_config = agent_input.get("business_config", {})
-        lead_context = agent_input.get("lead_context", {})
-        conversation_history = agent_input.get("conversation_history", [])
-
-        # Format business-specific parameters dynamically to ensure no hardcoding
-        tone = business_config.get("tone", "Professional English")
-        primary_goal = business_config.get("primary_goal", "")
-        primary_cta = business_config.get("primary_cta", "")
-        products = business_config.get("products", [])
-        faqs = business_config.get("faqs", [])
-        qualification_questions = business_config.get("qualification_questions", [])
-        objection_handling = business_config.get("objection_handling", [])
-        do_not_say = business_config.get("do_not_say", [])
-
-        system_instruction = f"""
-You are the Sales AI agent for a Multi-Agent Operating System (MOS).
-Your purpose is to drive conversions and guide the lead through the qualification pipeline.
-
-Responsibilities:
-- Conduct qualification conversations naturally based on the missing answers in your qualification list.
-- Handle objections smoothly using the provided guidelines.
-- Proactively guide the lead toward the primary CTA: "{primary_cta}".
-- Keep responses fully personalized to the lead context.
-
-Business Configuration Rules for Tenant '{tenant_id}':
-- Business Name: {business_config.get('business_name', 'N/A')}
-- Industry: {business_config.get('industry', 'N/A')}
-- Communication Tone: {tone}
-- Primary Goal: {primary_goal}
-- Products/Services: {json.dumps(products)}
-- Reference FAQs: {json.dumps(faqs)}
-- Questions to Qualify Lead: {json.dumps(qualification_questions)}
-- Objection Handling Guidelines: {json.dumps(objection_handling)}
-- Restricted Phrases (DO NOT SAY): {json.dumps(do_not_say)}
-
-Core Persuasion Principle: Do not simply answer questions passively. Use your answers to move the user toward the next step of qualification or the primary call-to-action. Always respond natively in the requested tone ({tone}).
-
-Strict Rule: You must return ONLY valid JSON matching the requested schema. Do not include markdown code fences or conversational text wrapper blocks.
-""".strip()
-
-        user_prompt = f"""
-Lead Info:
-{json.dumps(lead_context, indent=2)}
-
-Full Conversation History:
-{json.dumps(conversation_history, indent=2)}
-
-Incoming Customer Message:
-"{customer_message}"
-
-Generate the appropriate sales response and fill out the metadata schema.
-""".strip()
-
-        expected_schema = """
+EXPECTED_SCHEMA = """
 {
   "agent": "sales_ai",
-  "response_text": "Aapka budget range kya hai?",
-  "next_action": "collect_budget",
-  "intent": "qualification",
-  "confidence": 0.91
+  "response_text": "string in the configured business tone",
+  "next_action": "string",
+  "intent": "string",
+  "confidence": 0.0
 }
 """.strip()
 
-        return generate_json_response(
-            system_instruction=system_instruction,
-            user_prompt=user_prompt,
-            expected_schema=expected_schema,
-            temperature=0.3
+
+def _find_do_not_say_violations(
+    response_text: str, do_not_say: List[str]
+) -> List[str]:
+    lowered = response_text.lower()
+    return [phrase for phrase in do_not_say if phrase and phrase.lower() in lowered]
+
+
+def run(agent_input: AgentInput) -> AgentEnvelope:
+    bc = agent_input.business_config
+
+    system_instruction = load_prompt(
+        "sales_system.txt",
+        business_name=bc.business_name,
+        industry=bc.industry,
+        tone=bc.tone,
+        primary_goal=bc.primary_goal,
+        primary_cta=bc.primary_cta,
+        products=serialize_dict(bc.products),
+        faqs=serialize_dict(bc.faqs),
+        qualification_questions=serialize_dict(bc.qualification_questions),
+        objection_handling=serialize_dict(bc.objection_handling),
+        do_not_say=serialize_dict(bc.do_not_say),
+    )
+
+    if agent_input.analytics_signal is not None:
+        analytics_block = wrap_untrusted(
+            "analytics_signal",
+            serialize_dict(agent_input.analytics_signal.model_dump()),
         )
+    else:
+        analytics_block = "(no analytics signal available — treat as cold lead)"
+
+    user_prompt = load_prompt(
+        "sales_user.txt",
+        analytics_signal=analytics_block,
+        lead_context=wrap_untrusted(
+            "lead_context", serialize_dict(agent_input.lead_context.model_dump())
+        ),
+        conversation_history=wrap_untrusted(
+            "conversation_history",
+            serialize_history(
+                [t.model_dump() for t in agent_input.conversation_history]
+            ),
+        ),
+        customer_message=wrap_untrusted(
+            "customer_message", agent_input.customer_message
+        ),
+    )
+
+    raw = generate_json_response(
+        system_instruction=system_instruction,
+        user_prompt=user_prompt,
+        expected_schema=EXPECTED_SCHEMA,
+        temperature=0.3,
+    )
+
+    envelope = envelope_from_llm(AGENT_NAME, raw)
+    if not envelope.success:
+        return envelope
+
+    try:
+        validated = SalesAgentData(**(envelope.data or {}))
+    except Exception as exc:
+        return AgentEnvelope(
+            agent=AGENT_NAME,
+            success=False,
+            error="output_schema_validation_failed",
+            error_details=str(exc),
+            raw_response=str(envelope.data),
+        )
+
+    data = validated.model_dump()
+    violations = _find_do_not_say_violations(validated.response_text, bc.do_not_say)
+    if violations:
+        data["policy_violations"] = violations
+        data["response_text"] = (
+            "[REDACTED — generated text contained restricted phrases; "
+            "regenerate with stronger guidance.]"
+        )
+
+    envelope.data = data
+    return envelope
+
+
+class SalesAgent:
+    """Backwards-compatible facade. Accepts dict or AgentInput, returns dict."""
+
+    @staticmethod
+    def run(agent_input: Union[AgentInput, dict]) -> dict:
+        if isinstance(agent_input, dict):
+            agent_input = AgentInput(**agent_input)
+        return run(agent_input).model_dump()

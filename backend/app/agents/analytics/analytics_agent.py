@@ -1,66 +1,82 @@
-import json
+from typing import Union
+
+from app.agents.base import envelope_from_llm, serialize_dict, serialize_history
+from app.prompts.loader import load_prompt, wrap_untrusted
+from app.schemas.agent_schema import AgentEnvelope, AgentInput, AnalyticsAgentData
 from app.services.llm.llm_service import generate_json_response
 
+AGENT_NAME = "analytics_ai"
 
-class AnalyticsAgent:
-    @staticmethod
-    def run(agent_input: dict) -> dict:
-        """
-        Lead analysis and categorization agent.
-        Responsibilities: source analysis, lead scoring, lead categorization, urgency detection, route recommendation.
-        """
-        tenant_id = agent_input.get("tenant_id", "unknown")
-        customer_message = agent_input.get("customer_message", "")
-        business_config = agent_input.get("business_config", {})
-        lead_context = agent_input.get("lead_context", {})
-        conversation_history = agent_input.get("conversation_history", [])
-
-        system_instruction = f"""
-You are the Analytics AI agent for a Multi-Agent Operating System (MOS).
-Your purpose is to perform lead analysis, intent detection, and lead categorization.
-
-Responsibilities:
-1. Analyze the incoming customer message and lead context (source, name, etc.).
-2. Evaluate lead quality and assign a score between 0 and 100 based on alignment with the business primary goals and products.
-3. Detect the customer's intent and categorize the lead (e.g., hot_lead, warm_lead, cold_lead).
-4. Recommend the next workflow action (e.g., sales_followup, support_routing, ignore).
-
-Business Context for Tenant '{tenant_id}':
-- Business Name: {business_config.get('business_name', 'N/A')}
-- Industry: {business_config.get('industry', 'N/A')}
-- Primary Goal: {business_config.get('primary_goal', 'N/A')}
-- Primary CTA: {business_config.get('primary_cta', 'N/A')}
-- Qualification Criteria: {json.dumps(business_config.get('qualification_questions', []))}
-
-Strict Rule: You must return ONLY valid JSON matching the requested schema. Do not include markdown code fences or conversational text wrapper blocks.
-""".strip()
-
-        user_prompt = f"""
-Lead Context:
-{json.dumps(lead_context, indent=2)}
-
-Recent Conversation History:
-{json.dumps(conversation_history, indent=2)}
-
-Latest Customer Message:
-"{customer_message}"
-
-Analyze this interaction and populate the requested fields according to the expected schema.
-""".strip()
-
-        expected_schema = """
+EXPECTED_SCHEMA = """
 {
   "agent": "analytics_ai",
-  "score": 82,
-  "intent": "pricing_query",
-  "category": "hot_lead",
-  "recommended_action": "sales_followup"
+  "score": 0,
+  "intent": "string",
+  "category": "hot_lead | warm_lead | cold_lead | spam",
+  "recommended_action": "sales_followup | qualification | nurture | support_routing | ignore"
 }
 """.strip()
 
-        return generate_json_response(
-            system_instruction=system_instruction,
-            user_prompt=user_prompt,
-            expected_schema=expected_schema,
-            temperature=0.2
+
+def run(agent_input: AgentInput) -> AgentEnvelope:
+    bc = agent_input.business_config
+
+    system_instruction = load_prompt(
+        "analytics_system.txt",
+        business_name=bc.business_name,
+        industry=bc.industry,
+        primary_goal=bc.primary_goal,
+        primary_cta=bc.primary_cta,
+        qualification_questions=serialize_dict(bc.qualification_questions),
+    )
+
+    user_prompt = load_prompt(
+        "analytics_user.txt",
+        lead_context=wrap_untrusted(
+            "lead_context", serialize_dict(agent_input.lead_context.model_dump())
+        ),
+        conversation_history=wrap_untrusted(
+            "conversation_history",
+            serialize_history(
+                [t.model_dump() for t in agent_input.conversation_history]
+            ),
+        ),
+        customer_message=wrap_untrusted(
+            "customer_message", agent_input.customer_message
+        ),
+    )
+
+    raw = generate_json_response(
+        system_instruction=system_instruction,
+        user_prompt=user_prompt,
+        expected_schema=EXPECTED_SCHEMA,
+        temperature=0.2,
+    )
+
+    envelope = envelope_from_llm(AGENT_NAME, raw)
+    if not envelope.success:
+        return envelope
+
+    try:
+        validated = AnalyticsAgentData(**(envelope.data or {}))
+    except Exception as exc:
+        return AgentEnvelope(
+            agent=AGENT_NAME,
+            success=False,
+            error="output_schema_validation_failed",
+            error_details=str(exc),
+            raw_response=str(envelope.data),
         )
+
+    envelope.data = validated.model_dump()
+    return envelope
+
+
+class AnalyticsAgent:
+    """Backwards-compatible facade. Accepts dict or AgentInput, returns dict."""
+
+    @staticmethod
+    def run(agent_input: Union[AgentInput, dict]) -> dict:
+        if isinstance(agent_input, dict):
+            agent_input = AgentInput(**agent_input)
+        return run(agent_input).model_dump()
