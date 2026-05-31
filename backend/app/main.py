@@ -5,21 +5,21 @@ from app.api.routers import api_router
 from app.db.database import engine
 from app.db import models
 
-# Initialize and create all SQLite tables on application startup
+# Application startup par saare SQLite tables ko generate karna
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Multi-Agent Operating System (MOS) - Phase 1")
 
-# Standard production-ready CORS configuration
+# Clean CORS Policy - Allows ALL Origins, Methods, and Headers
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Saare domains/origins ko explicitly allow karta hai
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # GET, POST, OPTIONS saare standard methods allow karta hai
+    allow_headers=["*"],  # Content-Type, Authorization saare headers allow karta hai
 )
 
-# Include the core assembled endpoint layout network
+# Core API router network assignment loading
 app.include_router(api_router)
 
 @app.get("/")

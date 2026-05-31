@@ -1,14 +1,24 @@
-from typing import List, Optional
-
+# backend/app/schemas/chat_schema.py
+from typing import Optional
 from pydantic import BaseModel
-
-from app.schemas.agent_schema import BusinessConfig, ConversationTurn, LeadContext
 
 
 class ChatMessageRequest(BaseModel):
     tenant_id: str
-    conversation_id: str
+    customer_id: str
     message: str
-    lead_context: Optional[LeadContext] = None
-    conversation_history: List[ConversationTurn] = []
-    business_config_override: Optional[BusinessConfig] = None
+    conversation_id: Optional[str] = None
+
+
+class AnalyticsSummarySchema(BaseModel):
+    score: int
+    category: str
+    recommended_action: str
+
+
+class ChatMessageResponse(BaseModel):
+    conversation_id: str
+    response_text: str
+    agent: str
+    intent: str
+    analytics: AnalyticsSummarySchema
